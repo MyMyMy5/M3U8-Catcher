@@ -1,4 +1,5 @@
 import { groupCaptures } from "./capture-grouping.js";
+import { downloadVideoFromPlaylist, downloadDashVideo } from "../background/background-downloads.js";
 
 const listEl = document.getElementById("capture-list");
 const emptyEl = document.getElementById("empty-state");
@@ -428,13 +429,71 @@ const completeProgress = (ok, message) => {
   }
 };
 
-const deriveSuggestedName = (url, fallback = "video.mp4") => {
+const deriveSuggestedName = (url, title, fallback = "video.mp4") => {
+  if (title) {
+    const safe = title.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").trim().slice(0, 160);
+    return safe ? `${safe}.mp4` : fallback;
+  }
   try {
     const u = new URL(url);
     const last = u.pathname.split("/").filter(Boolean).pop() || fallback;
     return last.endsWith(".mp4") ? last : `${last}.mp4`;
   } catch (err) {
     return fallback;
+  }
+};
+
+const streamingDownload = async (capture, downloadUrl, isDash) => {
+  let writable;
+  try {
+    const suggestedName = deriveSuggestedName(capture.url, capture.title);
+    const handle = await window.showSaveFilePicker({ suggestedName });
+    writable = await handle.createWritable();
+
+    let writeChain = Promise.resolve();
+
+    const onData = (chunk) => {
+      writeChain = writeChain.then(async () => {
+        const data = await normalizeWriteChunk(chunk);
+        if (data === null) {
+          throw new Error("Stream chunk is not a binary buffer.");
+        }
+        await writable.write(data);
+      });
+    };
+
+    const progressCb = (info) => {
+      setProgress(info);
+    };
+
+    if (isDash) {
+      await downloadDashVideo(downloadUrl, progressCb, {
+        stream: true,
+        onData,
+        referrer: capture.sourcePage,
+      });
+    } else {
+      await downloadVideoFromPlaylist(downloadUrl, 0, progressCb, {
+        stream: true,
+        onData,
+        referrer: capture.sourcePage,
+      });
+    }
+
+    await writeChain;
+    await writable.close();
+    setStatus("Download finished. File saved.");
+    completeProgress(true, "Streaming download completed.");
+  } catch (err) {
+    if (writable) await writable.abort?.();
+    if (err?.name === "AbortError") {
+      setStatus("");
+      setProgress({});
+      return;
+    }
+    const errorText = err?.message || "Download failed.";
+    setStatus(errorText, "danger");
+    completeProgress(false, errorText);
   }
 };
 
@@ -1212,28 +1271,32 @@ const renderCaptures = (captures) => {
               return;
             }
             // Download the selected variant
-            setStatus("Assembling video from manifest, please wait...");
-            setProgress({ phase: "fetch-manifest", detail: "Starting request..." });
-            try {
-              const response = await sendMessage({
-                type: "downloadVideo",
-                url: capture.url,
-                variantUri: selected.uri,
-                format: fmt,
-                contentType: capture.contentType,
-                fileName: capture.fileName,
-                title: capture.title,
-                size: capture.size,
-                sourcePage: capture.sourcePage,
-                tabId: capture.tabId
-              });
-              if (!response?.ok) {
-                setStatus(response?.error || "Download failed", "danger");
-                return;
+            if (window.showSaveFilePicker) {
+              await streamingDownload(capture, selected.uri, fmt === "mpd");
+            } else {
+              setStatus("Assembling video from manifest, please wait...");
+              setProgress({ phase: "fetch-manifest", detail: "Starting request..." });
+              try {
+                const response = await sendMessage({
+                  type: "downloadVideo",
+                  url: capture.url,
+                  variantUri: selected.uri,
+                  format: fmt,
+                  contentType: capture.contentType,
+                  fileName: capture.fileName,
+                  title: capture.title,
+                  size: capture.size,
+                  sourcePage: capture.sourcePage,
+                  tabId: capture.tabId
+                });
+                if (!response?.ok) {
+                  setStatus(response?.error || "Download failed", "danger");
+                  return;
+                }
+                setStatus("Download in progress. You can close this popup — it will continue in the background.");
+              } catch (err) {
+                setStatus("Download failed to start.", "danger");
               }
-              setStatus("Download in progress. You can close this popup — it will continue in the background.");
-            } catch (err) {
-              setStatus("Download failed to start.", "danger");
             }
             return;
           }
@@ -1255,6 +1318,11 @@ const renderCaptures = (captures) => {
       }
 
       // Normal download path (direct files or single-variant playlists)
+      // For playlists, prefer streaming-to-disk when showSaveFilePicker is available
+      if (!isDirect && window.showSaveFilePicker) {
+        await streamingDownload(capture, capture.url, fmt === "mpd");
+        return;
+      }
       setStatus(
         isDirect
           ? "Starting direct download..."
