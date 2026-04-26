@@ -1,7 +1,25 @@
-.test-profile/
+# Dependencies
 node_modules/
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Kiro
+.kiro/
+
+# Playwright
+.playwright-mcp/
+
+# Test profiles
+.test-profile/
+
+# Test artifacts
 test-extension.js
 snapshot-*.png
 test-result.png
 extension-popup.png
-.playwright-mcp/
+
+# OS files
+.DS_Store
+Thumbs.db
