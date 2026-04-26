@@ -1,0 +1,12 @@
+export const STORAGE_KEY = "m3u8Captures";
+export const MAX_ENTRIES = 200;
+export const PLAYLIST_REGEX = /\.(m3u8|mpd|f4m|ism|ismc|pls)(\b|[?#])/i;
+export const M3U8_REGEX = /\.m3u8(\b|[?#])/i;
+export const VIDEO_EXT_REGEX = /\.(mp4|webm|mov|mkv|avi|flv|m4v|mpg|mpeg|3gp|3g2)(\b|[?#])/i;
+export const TELEGRAM_HOST_REGEX = /(^|\.)telegram\.org$/i;
+export const TELEGRAM_STREAM_PATH_REGEX = /\/stream\/([^/?#]+)/i;
+export const MAX_VARIANT_RECURSION = 2;
+export const SUPPORTED_FORMATS = ["m3u8", "mpd", "f4m", "ism", "ismc", "pls"];
+export const DIRECT_VIDEO_FOLDER = "video";
+export const MAX_TELEGRAM_CHUNKS = 20000;
+export const TELEGRAM_PAGE_BRIDGE_FILE = "content/telegram-page.js";

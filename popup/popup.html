@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>M3U8 Catcher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">Network watcher</p>
+        <h1>M3U8 Catcher</h1>
+        <p class="subhead">Capture playlist and media requests, preview them, then download.</p>
+      </div>
+      <div class="toolbar">
+        <button id="refresh" class="btn ghost" type="button">Refresh</button>
+        <button id="download-all" class="btn primary" type="button">Download All</button>
+        <button id="copy-urls" class="btn ghost" type="button">Copy URLs</button>
+        <button id="diagnostics" class="btn ghost" type="button">Telegram diagnostics</button>
+        <button id="media-diagnostics" class="btn ghost" type="button">Media diagnostics</button>
+        <button id="clear" class="btn danger" type="button">Clear</button>
+      </div>
+    </header>
+
+    <section class="status-bar">
+      <span id="count" class="pill">0 captures</span>
+      <span id="status-message" aria-live="polite"></span>
+    </section>
+
+    <section id="progress" class="progress hidden" aria-live="polite">
+      <div class="progress__header">
+        <span id="progress-label">Idle</span>
+        <span id="progress-value">0%</span>
+      </div>
+      <div class="progress__bar">
+        <div id="progress-fill"></div>
+      </div>
+      <div id="progress-detail" class="progress__detail"></div>
+    </section>
+
+    <main class="list-panel">
+      <div class="search-bar">
+        <input id="search-input" type="text" class="search-input" placeholder="Search captures…" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="list-head">
+        <div class="list-title">Download list</div>
+        <label class="show-all-toggle" title="Show variant sub-playlists">
+          <input id="show-variants" type="checkbox" />
+          <span>Show all</span>
+        </label>
+      </div>
+
+      <section id="empty-state" class="empty hidden">
+        <div class="empty__icon" aria-hidden="true">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline>
+            <path
+              d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
+            </path>
+          </svg>
+        </div>
+        <p class="empty__title">No captures yet</p>
+        <p class="empty__hint">
+          Keep this popup open or hit refresh after starting playback. The service worker listens to network traffic
+          automatically.
+        </p>
+      </section>
+
+      <div id="capture-list" class="capture-list" role="list"></div>
+    </main>
+
+    <hr class="separator">
+    <footer class="foot">
+      <p>Load as an unpacked extension, then watch the list update whenever a playlist is requested.</p>
+    </footer>
+  </div>
+  <!-- Quality Selector Modal -->
+  <div id="quality-modal" class="quality-modal hidden" role="dialog" aria-label="Select quality">
+    <div class="quality-modal__backdrop"></div>
+    <div class="quality-modal__panel">
+      <div class="quality-modal__header">
+        <span class="quality-modal__title">Select Quality</span>
+        <button id="quality-modal-close" class="icon-btn quality-modal__close" type="button" title="Cancel">&times;</button>
+      </div>
+      <div id="quality-modal-list" class="quality-modal__list" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- Batch Quality Prompt Modal -->
+  <div id="batch-quality-modal" class="quality-modal hidden" role="dialog" aria-label="Select batch quality">
+    <div class="quality-modal__backdrop"></div>
+    <div class="quality-modal__panel">
+      <div class="quality-modal__header">
+        <span class="quality-modal__title">Batch Quality</span>
+        <button id="batch-quality-modal-close" class="icon-btn quality-modal__close" type="button" title="Cancel">&times;</button>
+      </div>
+      <div id="batch-quality-modal-list" class="quality-modal__list" role="listbox"></div>
+    </div>
+  </div>
+
+  <script src="hls.min.js"></script>
+  <script type="module" src="popup.js"></script>
+</body>
+
+</html>

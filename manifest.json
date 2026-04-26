@@ -1,0 +1,60 @@
+{
+  "name": "M3U8 Catcher",
+  "description": "Capture .m3u8 and any other playlist URLs from network requests so you can download them.",
+  "version": "1.0.0",
+  "manifest_version": 3,
+  "permissions": [
+    "webRequest",
+    "storage",
+    "downloads",
+    "scripting",
+    "tabs",
+    "notifications",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/page-capture.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://web.telegram.org/*"
+      ],
+      "js": [
+        "content/telegram-capture.js",
+        "content/telegram-download.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.panopto.eu/*",
+        "https://*.panopto.com/*",
+        "https://*.hosted.panopto.com/*"
+      ],
+      "js": [
+        "content/panopto-capture.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "M3U8 Catcher",
+    "default_popup": "popup/popup.html"
+  }
+}

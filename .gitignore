@@ -1,0 +1,7 @@
+.test-profile/
+node_modules/
+test-extension.js
+snapshot-*.png
+test-result.png
+extension-popup.png
+.playwright-mcp/
