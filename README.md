@@ -10,6 +10,7 @@
 - **Automatic Detection** — Captures `.m3u8`, `.mpd`, `.f4m`, `.ism/.ismc`, `.pls`, and direct media URLs from any page via `chrome.webRequest`
 - **Inline HLS Preview** — Click the play button to stream M3U8 playlists directly in the popup using [HLS.js](https://github.com/video-dev/hls.js/)
 - **Video Assembly & Download** — Fetches all segments from HLS/DASH playlists, stitches them together, and downloads a single `.mp4` file
+- **Streaming-to-Disk Downloads** — Large videos stream directly to disk via the File System Access API (`showSaveFilePicker`), keeping memory usage constant regardless of video size. Falls back to RAM-buffered downloads when the API is unavailable.
 - **Telegram Support** — Dedicated content scripts for capturing media from Telegram Web
 - **MIME-Type Detection** — Captures requests by URL extension *and* response content-type headers
 - **Live Updates** — Popup auto-refreshes via `chrome.storage.onChanged` when new requests are detected
@@ -121,6 +122,8 @@ m3u8-catcher/
 │   ├── capture-grouping.js        # Capture grouping logic (pure function)
 │   └── hls.min.js                 # HLS.js library
 └── tests/
+    ├── normalizeWriteChunk.property.test.js # Chunk normalization property tests
+    ├── deriveSuggestedName.property.test.js # Filename derivation property tests
     ├── background-variants.test.js          # Unit tests for variant parser
     ├── background-variants.property.test.js # Property-based tests (fast-check)
     ├── background-notifications.test.js     # Notification module tests
@@ -160,6 +163,8 @@ npm test
 - **Notifications** — Mock-based tests for Chrome notification API
 - **Capture Grouping** — Property tests verifying grouping invariants
 - **Title Extraction** — Property tests for priority order and sanitization
+- **Chunk Normalization** — Property tests verifying byte-for-byte round-trip across all supported binary formats
+- **Filename Derivation** — Property tests for title sanitization, URL extraction, and safe filename generation
 
 ---
 
@@ -168,7 +173,7 @@ npm test
 - **DRM** — Widevine, PlayReady, and FairPlay protected streams will fail
 - **DASH** — No live MPD, no `SegmentTimeline`, no byte-range segments
 - **AES-128** — Only `KEYFORMAT=identity` is supported
-- **Memory** — Segment assembly happens in RAM; very large videos may be slow
+- **Memory** — Segment assembly happens in RAM when the File System Access API is unavailable; very large videos may be slow in fallback mode
 - **Preview** — HLS preview works for most unencrypted streams; DRM or auth-gated streams will show an error
 - **Quality Selector** — Only appears for master playlists with 2+ variants; single-quality streams download directly
 
