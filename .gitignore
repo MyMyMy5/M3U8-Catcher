@@ -20,9 +20,6 @@ snapshot-*.png
 test-result.png
 extension-popup.png
 
-# Old project reference
-Project_Download_Video/
-
 # OS files
 .DS_Store
 Thumbs.db
