@@ -50,7 +50,7 @@
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/m3u8-catcher.git
+   git clone https://github.com/MyMyMy5/m3u8-catcher.git
    ```
 2. Open **`chrome://extensions`** in Chrome
 3. Enable **Developer mode** (toggle in the top right)
