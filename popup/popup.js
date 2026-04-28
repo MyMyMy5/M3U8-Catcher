@@ -1,4 +1,4 @@
-import { groupCaptures } from "./capture-grouping.js";
+import { groupCaptures, getGroupKey } from "./capture-grouping.js";
 import { downloadVideoFromPlaylist, downloadDashVideo } from "../background/background-downloads.js";
 
 const listEl = document.getElementById("capture-list");
@@ -268,6 +268,32 @@ let expandedRow = null;
 let currentHls = null;
 let lastCaptures = [];
 let batchCancel = null;
+
+const contentClassificationCache = new Map(); // url -> "master" | "media" | "unknown"
+
+const isVariantByClassification = (url) => {
+  if (contentClassificationCache.has(url)) {
+    return contentClassificationCache.get(url) === "media";
+  }
+  return isVariantUrl(url);
+};
+
+const deriveQualityLabel = (url) => {
+  try {
+    const u = new URL(url);
+    const segments = u.pathname.split("/").filter(Boolean);
+    // Look for resolution hints in path segments
+    for (const seg of segments) {
+      const match = seg.match(/(\d{3,4})p/i);
+      if (match) return `${match[1]}p`;
+    }
+    // Use last segment as label
+    const lastSeg = segments[segments.length - 1] || url;
+    return lastSeg.replace(/\.m3u8$/i, "");
+  } catch (_) {
+    return url;
+  }
+};
 
 const guessFormatFromUrl = (url) => {
   const match = url.match(
@@ -967,6 +993,45 @@ batchQualityModalClose.addEventListener("click", () => {
   hideBatchQualityModal();
 });
 
+let classifyInProgress = false;
+
+const classifyM3u8Captures = async (captures) => {
+  if (classifyInProgress) return;
+  classifyInProgress = true;
+  try {
+    const m3u8Urls = captures
+      .filter((c) => {
+        const fmt = (c.format || guessFormatFromUrl(c.url) || "").toLowerCase();
+        return fmt === "m3u8";
+      })
+      .map((c) => c.url)
+      .filter((url) => !contentClassificationCache.has(url));
+
+    if (m3u8Urls.length === 0) return;
+
+    let changed = false;
+    await Promise.all(
+      m3u8Urls.map(async (url) => {
+        try {
+          const result = await sendMessage({ type: "classifyContent", url });
+          if (result && result.type) {
+            contentClassificationCache.set(url, result.type);
+            changed = true;
+          }
+        } catch (_) {
+          // skip failed classifications
+        }
+      })
+    );
+
+    if (changed) {
+      renderCaptures(lastCaptures);
+    }
+  } finally {
+    classifyInProgress = false;
+  }
+};
+
 const renderCaptures = (captures) => {
   lastCaptures = captures;
   listEl.innerHTML = "";
@@ -994,7 +1059,7 @@ const renderCaptures = (captures) => {
     filtered = filtered.filter((c) => {
       const fmt = (c.format || guessFormatFromUrl(c.url) || "").toLowerCase();
       if (fmt !== "m3u8") return true;
-      return !isVariantUrl(c.url);
+      return !isVariantByClassification(c.url);
     });
   }
 
@@ -1312,6 +1377,87 @@ const renderCaptures = (captures) => {
               }
             }
           }
+
+          // Group correlation: if getVariants returned 0-1 variants for an M3U8,
+          // check if this capture belongs to a group with multiple M3U8 members
+          if (fmt === "m3u8" && (!variantResponse?.variants || variantResponse.variants.length < 2)) {
+            const captureKey = getGroupKey(capture);
+            if (captureKey) {
+              const groups = groupCaptures(lastCaptures);
+              const myGroup = groups.find(g => {
+                const pk = getGroupKey(g.primary);
+                return pk === captureKey;
+              });
+              if (myGroup && myGroup.related.length > 0) {
+                const allMembers = [myGroup.primary, ...myGroup.related];
+                const m3u8Members = allMembers.filter(c => {
+                  const f = guessFormatFromUrl(c.url);
+                  return f === "m3u8";
+                });
+                if (m3u8Members.length >= 2) {
+                  // Classify each member via cache or classifyContent message
+                  const classifications = await Promise.all(
+                    m3u8Members.map(async (c) => {
+                      if (contentClassificationCache.has(c.url)) {
+                        return { capture: c, type: contentClassificationCache.get(c.url) };
+                      }
+                      try {
+                        const resp = await sendMessage({ type: "classifyContent", url: c.url });
+                        if (resp?.type) {
+                          contentClassificationCache.set(c.url, resp.type);
+                          return { capture: c, type: resp.type };
+                        }
+                      } catch (_) { /* skip */ }
+                      return { capture: c, type: "unknown" };
+                    })
+                  );
+                  const mediaMembers = classifications.filter(cl => cl.type === "media");
+                  if (mediaMembers.length >= 2) {
+                    // Build variants from group members for quality selection
+                    const groupVariants = mediaMembers.map(cl => ({
+                      uri: cl.capture.url,
+                      resolution: cl.capture.resolution || null,
+                      bandwidth: 0,
+                      label: deriveQualityLabel(cl.capture.url)
+                    }));
+                    const selected = await showQualityModal(groupVariants);
+                    if (!selected) {
+                      setStatus("");
+                      return;
+                    }
+                    // Download the selected group member URL
+                    if (window.showSaveFilePicker) {
+                      await streamingDownload(capture, selected.uri, false);
+                    } else {
+                      setStatus("Assembling video from manifest, please wait...");
+                      setProgress({ phase: "fetch-manifest", detail: "Starting request..." });
+                      try {
+                        const response = await sendMessage({
+                          type: "downloadVideo",
+                          url: selected.uri,
+                          format: fmt,
+                          contentType: capture.contentType,
+                          fileName: capture.fileName,
+                          title: capture.title,
+                          size: capture.size,
+                          sourcePage: capture.sourcePage,
+                          tabId: capture.tabId
+                        });
+                        if (!response?.ok) {
+                          setStatus(response?.error || "Download failed", "danger");
+                          return;
+                        }
+                        setStatus("Download in progress. You can close this popup — it will continue in the background.");
+                      } catch (err) {
+                        setStatus("Download failed to start.", "danger");
+                      }
+                    }
+                    return;
+                  }
+                }
+              }
+            }
+          }
         } catch (_) {
           // getVariants failed, fall through to normal download
         }
@@ -1459,6 +1605,9 @@ const renderCaptures = (captures) => {
     });
     listEl.appendChild(showMoreBtn);
   }
+
+  // Fire-and-forget: classify M3U8 captures via content inspection
+  classifyM3u8Captures(captures);
 };
 
 /* ── Active tab domain filtering ── */
@@ -1546,7 +1695,7 @@ if (copyUrlsBtn) {
         const fmt = (c.format || guessFormatFromUrl(c.url) || "").toLowerCase();
         return fmt === "m3u8" || fmt === "mpd";
       })
-      .filter((c) => !isVariantUrl(c.url))
+      .filter((c) => !isVariantByClassification(c.url))
       .map((c) => c.url);
     if (!playlistUrls.length) {
       setStatus("No downloadable playlist URLs to copy.", "danger");
@@ -1567,7 +1716,7 @@ if (downloadAllBtn) {
     // Gather downloadable captures — playlists (non-variant) + direct video files
     let downloadable = lastCaptures.filter((c) => {
       const fmt = (c.format || guessFormatFromUrl(c.url) || "").toLowerCase();
-      const isPlaylist = (fmt === "m3u8" || fmt === "mpd") && !isVariantUrl(c.url);
+      const isPlaylist = (fmt === "m3u8" || fmt === "mpd") && !isVariantByClassification(c.url);
       const isDirectVideo = VIDEO_EXTENSIONS.includes(fmt);
       return isPlaylist || isDirectVideo;
     });

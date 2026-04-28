@@ -219,3 +219,98 @@ export const selectClosestVariant = (variants, targetHeight) => {
 
   return best;
 };
+
+// ── Content-based classification helpers ────────────────────────────────
+
+/**
+ * Returns true if the text is an HLS media playlist (contains segment
+ * entries but is NOT a master playlist).
+ *
+ * @param {string} text - Raw playlist text
+ * @returns {boolean}
+ */
+export const isMediaPlaylist = (text) => {
+  if (!text || typeof text !== "string") return false;
+  return text.includes("#EXTINF") && !text.includes("#EXT-X-STREAM-INF");
+};
+
+/**
+ * Returns true if the text is an HLS master playlist (contains at least
+ * one #EXT-X-STREAM-INF tag).
+ *
+ * @param {string} text - Raw playlist text
+ * @returns {boolean}
+ */
+export const isMasterPlaylist = (text) => {
+  if (!text || typeof text !== "string") return false;
+  return text.includes("#EXT-X-STREAM-INF");
+};
+
+// ── Master URL derivation ───────────────────────────────────────────────
+
+const MASTER_FILENAMES = ["master.m3u8", "playlist.m3u8", "index.m3u8"];
+
+/**
+ * Derive candidate master playlist URLs by walking up the path hierarchy
+ * of a variant (media) playlist URL. At each directory level, appends
+ * common master filenames and also tries the bare directory as an .m3u8.
+ *
+ * @param {string} variantUrl - The media playlist URL to derive from
+ * @returns {string[]} Ordered array of candidate master URLs to try
+ */
+export const deriveCandidateMasterUrls = (variantUrl) => {
+  let parsed;
+  try {
+    parsed = new URL(variantUrl);
+  } catch {
+    return [];
+  }
+
+  const candidates = [];
+  // Split pathname into segments, filter out empty strings
+  const segments = parsed.pathname.split("/").filter(Boolean);
+
+  // Remove the filename (last segment) to start from its parent directory
+  // e.g. /hls/720p/stream.m3u8 → segments = ["hls", "720p", "stream.m3u8"]
+  // We walk from ["hls", "720p"] down to ["hls"] then []
+  for (let depth = segments.length - 1; depth >= 0; depth--) {
+    const parentPath = depth > 0
+      ? "/" + segments.slice(0, depth).join("/") + "/"
+      : "/";
+
+    for (const filename of MASTER_FILENAMES) {
+      const candidate = `${parsed.origin}${parentPath}${filename}`;
+      // Don't include the original URL in candidates
+      if (candidate !== parsed.origin + parsed.pathname) {
+        candidates.push(candidate);
+      }
+    }
+  }
+
+  return candidates;
+};
+
+/**
+ * Discover the parent master playlist for a variant (media) playlist URL.
+ * Tries each candidate URL sequentially, returning the first valid master.
+ *
+ * @param {string} variantUrl - The media playlist URL to discover master for
+ * @param {(url: string) => Promise<string>} fetchFn - Async function that fetches a URL and returns text (throws on error)
+ * @returns {Promise<{masterUrl: string, text: string}|null>} First matching master, or null
+ */
+export const discoverMasterPlaylist = async (variantUrl, fetchFn) => {
+  const candidates = deriveCandidateMasterUrls(variantUrl);
+
+  for (const candidate of candidates) {
+    try {
+      const text = await fetchFn(candidate);
+      if (isMasterPlaylist(text)) {
+        return { masterUrl: candidate, text };
+      }
+    } catch {
+      // Fetch failed for this candidate — skip to next
+    }
+  }
+
+  return null;
+};

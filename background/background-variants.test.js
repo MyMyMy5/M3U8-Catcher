@@ -4,6 +4,8 @@ import {
   parseDashVariants,
   selectHighestQuality,
   selectClosestVariant,
+  deriveCandidateMasterUrls,
+  discoverMasterPlaylist,
 } from "./background-variants.js";
 
 // ── parseHlsVariants ────────────────────────────────────────────────────
@@ -263,5 +265,203 @@ describe("selectClosestVariant", () => {
 
   it("returns null for non-array input", () => {
     expect(selectClosestVariant(null, 1080)).toBeNull();
+  });
+});
+
+
+// ── deriveCandidateMasterUrls ───────────────────────────────────────────
+
+describe("deriveCandidateMasterUrls", () => {
+  it("generates candidates walking up the path hierarchy", () => {
+    const candidates = deriveCandidateMasterUrls(
+      "https://cdn.example.com/hls/720p/stream.m3u8"
+    );
+
+    expect(candidates).toEqual([
+      "https://cdn.example.com/hls/720p/master.m3u8",
+      "https://cdn.example.com/hls/720p/playlist.m3u8",
+      "https://cdn.example.com/hls/720p/index.m3u8",
+      "https://cdn.example.com/hls/master.m3u8",
+      "https://cdn.example.com/hls/playlist.m3u8",
+      "https://cdn.example.com/hls/index.m3u8",
+      "https://cdn.example.com/master.m3u8",
+      "https://cdn.example.com/playlist.m3u8",
+      "https://cdn.example.com/index.m3u8",
+    ]);
+  });
+
+  it("does not include the original URL in candidates", () => {
+    const url = "https://cdn.example.com/hls/720p/index.m3u8";
+    const candidates = deriveCandidateMasterUrls(url);
+    expect(candidates).not.toContain(url);
+  });
+
+  it("returns empty array for invalid URLs", () => {
+    expect(deriveCandidateMasterUrls("not-a-url")).toEqual([]);
+    expect(deriveCandidateMasterUrls("")).toEqual([]);
+  });
+
+  it("handles URL at root level with single path segment", () => {
+    const candidates = deriveCandidateMasterUrls(
+      "https://cdn.example.com/stream.m3u8"
+    );
+
+    expect(candidates).toEqual([
+      "https://cdn.example.com/master.m3u8",
+      "https://cdn.example.com/playlist.m3u8",
+      "https://cdn.example.com/index.m3u8",
+    ]);
+  });
+
+  it("handles deeply nested paths", () => {
+    const candidates = deriveCandidateMasterUrls(
+      "https://cdn.example.com/a/b/c/d/variant.m3u8"
+    );
+
+    expect(candidates).toHaveLength(15); // 5 levels × 3 filenames
+    expect(candidates[0]).toBe("https://cdn.example.com/a/b/c/d/master.m3u8");
+    expect(candidates[3]).toBe("https://cdn.example.com/a/b/c/master.m3u8");
+    expect(candidates[6]).toBe("https://cdn.example.com/a/b/master.m3u8");
+    expect(candidates[9]).toBe("https://cdn.example.com/a/master.m3u8");
+    expect(candidates[12]).toBe("https://cdn.example.com/master.m3u8");
+  });
+
+  it("preserves the origin (protocol + host + port)", () => {
+    const candidates = deriveCandidateMasterUrls(
+      "https://cdn.example.com:8443/hls/stream.m3u8"
+    );
+
+    expect(candidates.every((c) => c.startsWith("https://cdn.example.com:8443/"))).toBe(true);
+  });
+});
+
+
+// ── discoverMasterPlaylist ──────────────────────────────────────────────
+
+describe("discoverMasterPlaylist", () => {
+  const MASTER_TEXT = [
+    "#EXTM3U",
+    "#EXT-X-STREAM-INF:BANDWIDTH=4500000,RESOLUTION=1920x1080",
+    "1080p/index.m3u8",
+    "#EXT-X-STREAM-INF:BANDWIDTH=2500000,RESOLUTION=1280x720",
+    "720p/index.m3u8",
+  ].join("\n");
+
+  const MEDIA_TEXT = [
+    "#EXTM3U",
+    "#EXT-X-TARGETDURATION:10",
+    "#EXTINF:9.009,",
+    "segment0.ts",
+    "#EXT-X-ENDLIST",
+  ].join("\n");
+
+  it("returns the first candidate that is a master playlist", async () => {
+    const fetchFn = async (url) => {
+      if (url === "https://cdn.example.com/hls/master.m3u8") return MASTER_TEXT;
+      throw new Error("Not found");
+    };
+
+    const result = await discoverMasterPlaylist(
+      "https://cdn.example.com/hls/720p/stream.m3u8",
+      fetchFn
+    );
+
+    expect(result).not.toBeNull();
+    expect(result.masterUrl).toBe("https://cdn.example.com/hls/master.m3u8");
+    expect(result.text).toBe(MASTER_TEXT);
+  });
+
+  it("returns null when no candidate is a master playlist", async () => {
+    const fetchFn = async () => {
+      throw new Error("Not found");
+    };
+
+    const result = await discoverMasterPlaylist(
+      "https://cdn.example.com/hls/720p/stream.m3u8",
+      fetchFn
+    );
+
+    expect(result).toBeNull();
+  });
+
+  it("skips candidates that return media playlist content", async () => {
+    let fetchCount = 0;
+    const fetchFn = async (url) => {
+      fetchCount++;
+      if (url === "https://cdn.example.com/hls/master.m3u8") return MASTER_TEXT;
+      return MEDIA_TEXT; // Not a master — should be skipped
+    };
+
+    const result = await discoverMasterPlaylist(
+      "https://cdn.example.com/hls/720p/stream.m3u8",
+      fetchFn
+    );
+
+    expect(result).not.toBeNull();
+    expect(result.masterUrl).toBe("https://cdn.example.com/hls/master.m3u8");
+    expect(fetchCount).toBeGreaterThan(1); // Had to try multiple candidates
+  });
+
+  it("handles fetch errors gracefully and continues to next candidate", async () => {
+    let callIndex = 0;
+    const fetchFn = async (url) => {
+      callIndex++;
+      if (callIndex <= 2) throw new Error("Network error");
+      if (callIndex === 3) return MEDIA_TEXT; // Not a master
+      if (url.endsWith("master.m3u8")) return MASTER_TEXT;
+      throw new Error("Not found");
+    };
+
+    const result = await discoverMasterPlaylist(
+      "https://cdn.example.com/hls/720p/stream.m3u8",
+      fetchFn
+    );
+
+    // Should eventually find a master despite early errors
+    // (or return null if none matched — depends on candidate order)
+    // The key assertion: no unhandled errors thrown
+    expect(callIndex).toBeGreaterThan(2);
+  });
+
+  it("tries candidates sequentially (not in parallel)", async () => {
+    const callOrder = [];
+    const fetchFn = async (url) => {
+      callOrder.push(url);
+      if (url === "https://cdn.example.com/hls/720p/master.m3u8") return MASTER_TEXT;
+      throw new Error("Not found");
+    };
+
+    await discoverMasterPlaylist(
+      "https://cdn.example.com/hls/720p/stream.m3u8",
+      fetchFn
+    );
+
+    // First candidate should be at the same directory level
+    expect(callOrder[0]).toBe("https://cdn.example.com/hls/720p/master.m3u8");
+    // Should stop after finding the master (not fetch remaining candidates)
+    expect(callOrder).toHaveLength(1);
+  });
+
+  it("returns null for invalid variant URL", async () => {
+    const fetchFn = async () => MASTER_TEXT;
+
+    const result = await discoverMasterPlaylist("not-a-url", fetchFn);
+    expect(result).toBeNull();
+  });
+
+  it("stops fetching after finding the first master", async () => {
+    let fetchCount = 0;
+    const fetchFn = async () => {
+      fetchCount++;
+      return MASTER_TEXT;
+    };
+
+    const result = await discoverMasterPlaylist(
+      "https://cdn.example.com/hls/720p/stream.m3u8",
+      fetchFn
+    );
+
+    expect(result).not.toBeNull();
+    expect(fetchCount).toBe(1); // Should stop after first match
   });
 });

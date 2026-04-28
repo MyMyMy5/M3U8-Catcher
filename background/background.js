@@ -32,7 +32,10 @@ import {
 } from "./background-downloads.js";
 import {
   parseHlsVariants,
-  parseDashVariants
+  parseDashVariants,
+  isMasterPlaylist,
+  isMediaPlaylist,
+  discoverMasterPlaylist
 } from "./background-variants.js";
 import {
   notifyDownloadComplete,
@@ -325,15 +328,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           (text.includes("<MPD") ? "mpd" : null);
 
         let variants = [];
+        let masterUrl = null;
         if (detectedFormat === "m3u8") {
           variants = parseHlsVariants(text, resolvedUrl);
+
+          if (variants.length === 0 && isMediaPlaylist(text)) {
+            const master = await discoverMasterPlaylist(
+              resolvedUrl,
+              async (url) => { const r = await fetchText(url); return r.text; }
+            );
+            if (master) {
+              variants = parseHlsVariants(master.text, master.masterUrl);
+              masterUrl = master.masterUrl;
+            }
+          }
         } else if (detectedFormat === "mpd") {
           variants = parseDashVariants(text, resolvedUrl);
         }
 
-        respond({ ok: true, variants });
+        respond({ ok: true, variants, ...(masterUrl && { masterUrl }) });
       } catch (err) {
         respond({ ok: false, error: err?.message || "Failed to fetch variants." });
+      }
+    })();
+    return true;
+  }
+
+  if (message?.type === "classifyContent" && message.url) {
+    (async () => {
+      try {
+        const response = await fetchText(normalizeUrl(message.url));
+        const text = response.text;
+
+        if (isMasterPlaylist(text)) {
+          const resolvedUrl = response.url || normalizeUrl(message.url);
+          const variants = parseHlsVariants(text, resolvedUrl);
+          respond({ type: "master", variants });
+        } else if (isMediaPlaylist(text)) {
+          respond({ type: "media", variants: [] });
+        } else {
+          respond({ type: "unknown", variants: [] });
+        }
+      } catch (err) {
+        respond({ type: "unknown", variants: [], error: err?.message });
       }
     })();
     return true;
